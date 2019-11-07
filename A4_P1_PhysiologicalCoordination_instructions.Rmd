@@ -54,46 +54,194 @@ N.B. to give you a bit more data I included data from previous years (Study1, St
 
 ```{r}
 # Load the libraries
+devtools::install_github("thomasp85/patchwork")
+library(pacman)
+library(patchwork)
+p_load(tidyverse, gganimate, groupdata2)
 
 # Load the file
+data_cond1 <- read_csv("Data/Study1_G1_T1_Synchronous.csv")
+data_cond2 <- read_csv("Data/Study1_G1_T2_TurnTaking.csv")
+data_cond3 <- read_csv("Data/Study1_G1_T3_SelfPaced.csv")
+
 # Plot
+pc1h <- ggplot(data_cond1) + 
+  geom_line(aes(time, HR1, color = "red")) +
+  geom_line(aes(time, HR2, color = "blue"))
+pc1r <- ggplot(data_cond1) + 
+  geom_line(aes(time, Resp1, color = "red")) +
+  geom_line(aes(time, Resp2, color = "blue"))
+pc2h <- ggplot(data_cond2) + 
+  geom_line(aes(time, HR1, color = "red")) +
+  geom_line(aes(time, HR2, color = "blue"))
+pc2r <- ggplot(data_cond2) + 
+  geom_line(aes(time, Resp1, color = "red")) +
+  geom_line(aes(time, Resp2, color = "blue"))
+pc3h <- ggplot(data_cond3) + 
+  geom_line(aes(time, HR1, color = "red")) +
+  geom_line(aes(time, HR2, color = "blue"))
+pc3r <- ggplot(data_cond3) + 
+  geom_line(aes(time, Resp1, color = "red")) +
+  geom_line(aes(time, Resp2, color = "blue"))
 
+pc1h + pc1r + pc2h + pc2r + pc3h + pc3r + plot_layout(ncol = 2, heights = c(3, 2))
+
+```
+
+```{r}
+#getting indices of values within range (i.e. not outliers)
+
+getClosestMin <- function(i, withinThresh)
+{
+  for(j in 1:length(withinThresh))
+  {
+    if(withinThresh[j] > i)
+      return(withinThresh[j - 1])
+  }
+}
+
+getClosestMax <- function(i, withinThresh)
+{
+  for(j in length(withinThresh):1)
+  {
+    if(withinThresh[j] < i)
+      return(withinThresh[j + 1])
+  }
+}
 ## Remove outliers
-
-### Tip, check the function below
-removeOuts <- function(ts,threshold){
-  ts[ts > (mean(ts,na.rm=T) +
-             (threshold*sd(ts,na.rm=T))) | 
-       ts < (mean(ts,na.rm=T) -
-             (threshold*sd(ts,na.rm=T)))] = mean(ts,na.rm=T)
+removeOuts <- function(ts){
+  OutVals <- boxplot(ts)$out
+  withinThresh <- which(!(ts %in% OutVals))
+  for (i in 1:length(ts)){
+    if(i %% 100000 == 0){
+      print(i)
+    }
+    if(!(i %in% withinThresh))
+    {
+      if(i == 1){
+        ts[i] = ts[getClosestMax(i, withinThresh)]
+      }
+      else if(i == length(ts)){
+        ts[i] = ts[getClosestMin(i, withinThresh)]
+      }
+      else{
+        ts[i] = (ts[getClosestMin(i, withinThresh)] + ts[getClosestMax(i, withinThresh)]) / 2
+      }
+    }
+  }
   return(ts)
 }
-threshold=2.5 # Default value at 2.5 sds from the mean
+```
 
+```{r}
+#Loading/Creating the proper variables
+T1filename <- "T1noOut.csv"
+T2filename <- "T2noOut.csv"
+T3filename <- "T3noOut.csv"
 
+if (file.exists(c(T1filename, T2filename, T3filename))){
+  T1noOut <- read_csv(T1filename)
+  T2noOut <- read_csv(T2filename)
+  T3noOut <- read_csv(T3filename)
+  print(paste("Loaded files:", T1filename, T2filename, T3filename))
+}else{
+    T1noOut <- data_cond1 %>% mutate_at(c("HR1", "HR2", "Resp1", "Resp2"), removeOuts)
+    T2noOut <- data_cond2 %>% mutate_at(c("HR1", "HR2", "Resp1", "Resp2"), removeOuts)
+    T3noOut <- data_cond3 %>% mutate_at(c("HR1", "HR2", "Resp1", "Resp2"), removeOuts)
+    write_csv(T1noOut, T1filename)
+    write_csv(T2noOut, T2filename)
+    write_csv(T3noOut, T3filename)
+}
+
+```
+
+```{r}
+p_load(transformr)
 # Plot raw data againt those with the artiacts removed
+ggplot() + 
+  geom_path(data=T1noOut, aes(time, HR1, color = "blue")) +
+  geom_path(data=data_cond1, aes(time, HR1, color = "red"))
+
+ggplot() + 
+  geom_line(data=data_cond1, aes(time, HR2, color = "red")) +
+  geom_line(data=T1noOut, aes(time, HR2, color = "blue"))
+
+ggplot() + 
+  geom_line(data=data_cond1, aes(time, Resp1, color = "red")) +
+  geom_line(data=T1noOut, aes(time, Resp1, color = "blue"))
+
+ggplot() + 
+  geom_line(data=data_cond1, aes(time, Resp2, color = "red")) +
+  geom_line(data=T1noOut, aes(time, Resp2, color = "blue"))
+
+ggplot() + 
+  geom_line(data=data_cond2, aes(time, HR1, color = "red")) +
+  geom_line(data=T2noOut, aes(time, HR1, color = "blue")) +
+  transition_reveal(time)
+
+ggplot() + 
+  geom_line(data=data_cond2, aes(time, HR2, color = "red")) +
+  geom_line(data=T2noOut, aes(time, HR2, color = "blue"))
+
+ggplot() + 
+  geom_line(data=data_cond2, aes(time, Resp1, color = "red")) +
+  geom_line(data=T2noOut, aes(time, Resp1, color = "blue"))
+
+ggplot() + 
+  geom_line(data=data_cond2, aes(time, Resp2, color = "red")) +
+  geom_line(data=T2noOut, aes(time, Resp2, color = "blue"))
+
+ggplot() + 
+  geom_line(data=data_cond3, aes(time, HR1, color = "red")) +
+  geom_line(data=T3noOut, aes(time, HR1, color = "blue")) +
+  transition_reveal(time)
+
+ggplot() + 
+  geom_line(data=data_cond3, aes(time, HR2, color = "red")) +
+  geom_line(data=T3noOut, aes(time, HR2, color = "blue"))
+
+ggplot() + 
+  geom_line(data=data_cond3, aes(time, Resp1, color = "red")) +
+  geom_line(data=T3noOut, aes(time, Resp1, color = "blue"))
+
+ggplot() + 
+  geom_line(data=data_cond3, aes(time, Resp2, color = "red")) +
+  geom_line(data=T3noOut, aes(time, Resp2, color = "blue"))
 
 
+
+```
+
+```{r}
 ## Scale
 ### Tip: if scale() gives some issues, try the one below
-#z_scale <- function(column){
-#  column_c <- (column - mean(column)) / sd(column)
-#}
+z_scale <- function(column){
+  column_c <- (column - mean(column)) / sd(column)
+}
+
+T1noOutS <- T1noOut %>% mutate_at(c("HR1", "HR2", "Resp1", "Resp2"), z_scale)
+T2noOutS <- T2noOut %>% mutate_at(c("HR1", "HR2", "Resp1", "Resp2"), z_scale)
+T3noOutS <- T3noOut %>% mutate_at(c("HR1", "HR2", "Resp1", "Resp2"), z_scale)
 
 # Plot again to check how scaled data look like
-
+ggplot() + 
+  geom_line(data=T1noOut, aes(time, HR1, color = "red")) +
+  geom_line(data=T1noOutS, aes(time, HR1, color = "blue"))
 
 ## Downsample
 ### This is tricky, so you can have a look at my code  (relying on Ludvig's groupdata2) if you get stuck
-#d1 = d %>%
-#  group(n = 100, method = 'greedy') %>%
-#  dplyr::summarise(
-#    time = mean(time,na.rm=T),
-#    HR1 = mean(HR1S,na.rm=T),
-#    HR2 = mean(HR2S,na.rm=T),
-#    Resp1 = mean(Resp1S,na.rm=T),
-#    Resp2 = mean(Resp2S,na.rm=T),
-#    rowname = rowname[1]) #the index we use to put them back together 
+downsample <- function(data){
+  data <- data %>%
+  group(n = 100, method = 'greedy') %>%
+  dplyr::summarise(
+    time = mean(time,na.rm=T),
+    HR1 = mean(HR1,na.rm=T), 
+    HR2 = mean(HR2,na.rm=T),
+    Resp1 = mean(Resp1,na.rm=T),
+    Resp2 = mean(Resp2,na.rm=T))
+  return(data)
+}
+
 
 ## Plot the downsampled data
 p4 <- ggplot(data = d1) +
@@ -105,6 +253,13 @@ p4
 
 ## Now add the group, trial, condition to the cleaned up, scaled, downsampled data
 ## Tip the info is in the file name
+addInfo <- function(df, filename){
+  values <- str_extract_all(filename, "\\d")[[1]]
+  df$group <- values[2]
+  df$trial <- values[3]
+  df$condition <- str_extract(filename, "(?<=_)[a-zA-Z]{2,}")
+  return(df)
+}
 
 
 ```
@@ -123,18 +278,36 @@ A couple of tips:
 ```{r}
 # Define a function running the loading, artifact removal, scaling, downsampling, info adding.
 
-data_preprocess <- function(filename, threshold = 2.5){
-  
-  # To be filled in
-  
-  return(d1)
-
+data_preprocess <- function(filename, inputdir, outputdir){
+  print(filename)
+  #create output folder, will only actually do something on the first function call
+  filename <- file.path(inputdir, filename)
+  dir.create("output", showWarnings = FALSE)
+  outputfile = file.path(outputdir, filename)
+  #check if files already in output
+  if(file.exists(outputfile)){
+    data <- read_csv(outputfile)
+    return(data)
+  }
+  #Else
+  data <- read_csv(filename)
+  #check for study4
+  if(str_detect(filename, "Study4")){
+    colnames(data)[colnames(data)=="min"] <- "time"
+  }
+  data <- data %>% mutate_at(c("Resp1", "Resp2", "HR1", "HR2"), removeOuts)
+  data <- data %>% mutate_at(c("Resp1", "Resp2", "HR1", "HR2"), z_scale)
+  data <- data %>% mutate_at(c("Resp1", "Resp2", "HR1", "HR2"), downsample)
+  data <- addInfo(data, filename)
+  write_csv(data, outputfile)
+  return(data)
 }
 
 #  Identify all files to be read
+files <- list.files("data", pattern="\\.csv$")
 
 # Run the function on the whole dataset using map_df
-
+output <- map_df(files, data_preprocess, "data", "output")
          
 # Now we need to make sure all the data are meaningful or something has to be removed
 # E.g. "Study1_G1_T1_Synchronous" has one bad respiration signal. We could replace it with NAs
