@@ -93,15 +93,25 @@ pc1h + pc1r + pc2h + pc2r + pc3h + pc3r + plot_layout(ncol = 2, heights = c(3, 2
 
 getClosestMin <- function(i, withinThresh)
 {
+  if(i > max(withinThresh))
+  {
+    return(max(withinThresh))
+  }
   for(j in 1:length(withinThresh))
   {
-    if(withinThresh[j] > i)
+    if(withinThresh[j] > i){
       return(withinThresh[j - 1])
+    }
   }
 }
 
 getClosestMax <- function(i, withinThresh)
 {
+  if(i < min(withinThresh))
+  {
+    return(min(withinThresh))  
+  }
+  
   for(j in length(withinThresh):1)
   {
     if(withinThresh[j] < i)
@@ -118,10 +128,10 @@ removeOuts <- function(ts){
     }
     if(!(i %in% withinThresh))
     {
-      if(i == 1){
+      if(i < withinThresh[1]){
         ts[i] = ts[getClosestMax(i, withinThresh)]
       }
-      else if(i == length(ts)){
+      else if(i > withinThresh[length(withinThresh)]){
         ts[i] = ts[getClosestMin(i, withinThresh)]
       }
       else{
@@ -131,6 +141,7 @@ removeOuts <- function(ts){
   }
   return(ts)
 }
+output <- map_dfr(files, data_preprocess, "data", "output")
 ```
 
 ```{r}
@@ -277,28 +288,35 @@ A couple of tips:
 
 ```{r}
 # Define a function running the loading, artifact removal, scaling, downsampling, info adding.
-
+devtools::install_github("DavisVaughan/furrr")
+library(pacman)
+p_load(tidyverse, groupdata2)
+library(furrr)
+plan(multiprocess)
 data_preprocess <- function(filename, inputdir, outputdir){
   print(filename)
   #create output folder, will only actually do something on the first function call
-  filename <- file.path(inputdir, filename)
+  inputfile <- file.path(inputdir, filename)
   dir.create("output", showWarnings = FALSE)
   outputfile = file.path(outputdir, filename)
+  print(outputfile)
   #check if files already in output
   if(file.exists(outputfile)){
     data <- read_csv(outputfile)
     return(data)
   }
   #Else
-  data <- read_csv(filename)
+  data <- read_csv(inputfile)
+  data <- data[1:100,]
   #check for study4
   if(str_detect(filename, "Study4")){
     colnames(data)[colnames(data)=="min"] <- "time"
   }
   data <- data %>% mutate_at(c("Resp1", "Resp2", "HR1", "HR2"), removeOuts)
   data <- data %>% mutate_at(c("Resp1", "Resp2", "HR1", "HR2"), z_scale)
-  data <- data %>% mutate_at(c("Resp1", "Resp2", "HR1", "HR2"), downsample)
+  data <- downsample(data)
   data <- addInfo(data, filename)
+  print("this is fine")
   write_csv(data, outputfile)
   return(data)
 }
@@ -307,7 +325,7 @@ data_preprocess <- function(filename, inputdir, outputdir){
 files <- list.files("data", pattern="\\.csv$")
 
 # Run the function on the whole dataset using map_df
-output <- map_df(files, data_preprocess, "data", "output")
+output <- map_dfr(files, data_preprocess, "data", "output")
          
 # Now we need to make sure all the data are meaningful or something has to be removed
 # E.g. "Study1_G1_T1_Synchronous" has one bad respiration signal. We could replace it with NAs
