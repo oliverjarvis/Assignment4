@@ -146,6 +146,7 @@ removeOuts <- function(ts){
 
 getClosest <- function(i, withinThresh, direction)
 {
+  browser()
   print(i)
   fun <- function(X, i) ifelse(withinThresh[X] > i, 1, ifelse(withinThresh[X] < i, -1, 0 ) )
   closest <- binsearch(fun, i, range=c(1, length(withinThresh)))
@@ -193,8 +194,7 @@ removeOutsBinary <- function(ts){
     ts[1:withinThresh[1]-1] <- closest
   }
   #process the values after withinThress[length(withinThresh)]
-  print(withinThresh[length(withinThresh)])
-  if(withinThresh[length(withinThresh)] < ts[length(ts)]){
+  if(withinThresh[length(withinThresh)] < length(ts)){
     closest = ts[getClosest(i, withinThresh, "max")]
     ts[withinThresh[length(withinThresh):length(ts)]] <- closest
   }
@@ -216,6 +216,7 @@ removeOutsBinary <- function(ts){
   return(ts)
 }
 output <- map_df(files, data_preprocess, "data", "output")
+#FIX IS PRETTY EASY. WE NEED TO DO SOMETHING ABOUT THE ROWS IN THERE ARE A BUNCH OF NAs.
 ```
 
 ```{r}
@@ -339,7 +340,7 @@ p4
 ## Now add the group, trial, condition to the cleaned up, scaled, downsampled data
 ## Tip the info is in the file name
 addInfo <- function(df, filename){
-  values <- str_extract_all(filename, "\\d")[[1]]
+  values <- str_extract_all(filename, "\\d+")[[1]]
   df$group <- values[2]
   df$trial <- values[3]
   df$condition <- str_extract(filename, "(?<=_)[a-zA-Z]{2,}")
@@ -364,6 +365,7 @@ A couple of tips:
 # Define a function running the loading, artifact removal, scaling, downsampling, info adding.
 library(pacman)
 p_load(tidyverse, groupdata2)
+
 data_preprocess <- function(filename, inputdir, outputdir){
   print(filename)
   #create output folder, will only actually do something on the first function call
@@ -402,6 +404,7 @@ output <- purrr::map_df(files, data_preprocess, "data", "output")
 # E.g. "Study1_G1_T1_Synchronous" has one bad respiration signal. We could replace it with NAs
 logr <- groupConsequtives(output$.groups)
 los <- str_extract(files, "(\\d)")
+ls.str(output)
 output$study <- 0
 currentIndex <- 0
 for(i in 1:length(logr)){
@@ -409,17 +412,119 @@ for(i in 1:length(logr)){
   currentIndex <- currentIndex + length(logr[[i]])
 }
 output$study <- as.numeric(output$study)
-output[output==NA] <- NA
+
+
+output[which(output$study == 2 & output$trial == 0),]$group <- 10
+output[which(output$study == 3 & output$trial == 0),]$group <- 10
+
+output[which(output$study == 3 & output$group == 10 & output$condition == "Synchronous"),]$trial <- 1
+output[which(output$study == 3 & output$group == 10 & output$condition == "Conversation"),]$trial <- 2
+output[which(output$study == 3 & output$group == 10 & output$condition == "TurnTaking"),]$trial <- 3
+
+output[which(output$study == 2 & output$group == 10 & output$condition == "Conversation"),]$trial <- 1
+output[which(output$study == 2 & output$group == 10 & output$condition == "TurnTaking"),]$trial <- 2
+output[which(output$study == 2 & output$group == 10 & output$condition == "Synchronous"),]$trial <- 3
+
+
+output[output=="NaN"] <- NA
+output <- output[-c(50185:52585),]
+
 
 output$pairID <- 100 * output$study + output$group
+
+#Normalizing the time values
+#Assuming that the large values are millisecond
+#choose 400 arbitrarily because it is above a reasonable minute count.
+output$time <- ifelse(output$time > 400, output$time/1000, output$time)
+output[50185,]
+
+tail(which(output$pairID == 207 & output$trial == 3))
+min(subset207_3$time)
+which(is.na(subset207_3$time))
+#time since 0
+output <- output %>% group_by(pairID, condition) %>% mutate(timesincestart = time - min(time))
+output[50185,]
 # plots plots plots
-ggplot(data=output, aes(time, HR1)) + 
-  geom_path(aes(group=pairID,  color=trial))
+ggplot(data=output[which(output$pairID==301),], aes(timesincestart, HR1)) + 
+  geom_line(aes(color=condition))
+
 # Remove bad data
+testSeq <- function(ts, threshold){
+  runningTot <- 0
+  sequential <- rle(ts)
+  for(i in 1:length(sequential$lengths)){
+    if(sequential$lengths[i] > 10){
+      interval <- output[sequential$lengths[i] + runningTot,]$timesincestart - output[1 + runningTot,]$timesincestart
+      if(interval > threshold){
+        ts[(1 + runningTot):(runningTot+sequential$lengths[i])] <- NA
+      }
+    }
+    runningTot <- runningTot + sequential$lengths[i]
+  }
+  if(sum(is.na(ts)) > 0.25 * length(ts)){
+    ts[1:length(ts)] <- NA
+  }
+  return(ts)
+}
+output2[1:1000,]$HR1 <- NA
+output <- output %>% group_by(pairID, condition) %>% mutate_at(c("HR1", "HR2", "Resp1", "Resp2"), testSeq, 0.5)
 
-
+col_types <- cols(
+  .groups = col_double(),
+  time = col_double(),
+  HR1 = col_double(),
+  HR2 = col_double(),
+  Resp1 = col_double(),
+  Resp2 = col_double(),
+  group = col_double(),
+  trial = col_double(),
+  condition = col_character(),
+  StudyNum = col_double(),
+  pairID = col_double(),
+  timesincestart = col_double()
+)
 # Save the data
+write_csv(output, "preprocessed_data.csv")
+```
 
+
+```{r}
+output <- read_csv("preprocessed_data.csv")
+output %>% 
+  group_by(pairID, condition) %>% 
+  summarize(na = sum(is.na(Resp1)), bad = na == length(HR1))
+
+#SpeedPlot
+
+makeplot <- function(data, x, y, condition){
+  p <- ggplot(data=data) +
+    geom_path(aes(x, y, color=condition))
+  return(p)
+}
+
+speedplotTS <- function(y, data){
+  conditions = unique(data$pairID)
+  p <- ggplot()
+  newline <- F
+  for(i in 1:length(conditions)){
+    ts <- data[which(data$pairID == conditions[i]),]$timesincestart
+    data_subset <- y[which(data$pairID == conditions[i])]
+    if(i == 1){
+      p <- p + makeplot(data, ts, y, conditions[1])
+    }
+    if(newline == T){
+      p <- p / makeplot(data, ts, y, conditions[1])
+      newline = F
+    }
+    if(i %% 2 == 0){
+        p <- p + makeplot(data, ts, y, conditions[i])
+        newline = T
+    }
+  }
+  return(p)
+}
+
+output %>% ungroup() %>% map_at(c("HR1", "HR2", "Resp1", "Resp2"), speedplotTS, output)
 ```
 
 ## Now we need to run some analysis
@@ -445,27 +550,139 @@ Bonus question: what if we include an additional layer? Is my heart rate just ad
 
 
 ```{r}
-
 # Genearate a column for each: previous HR1, HR2, Resp1, Resp2
-# Genearate a column for each: change in HR1, HR2, Resp1, Resp2
-
+output <- output %>% 
+  group_by(pairID, condition) %>% 
+  mutate(
+    HR1fut = lead(HR1, 1),
+    HR2fut = lead(HR2, 1),
+    Resp1fut = lead(Resp1, 1),
+    Resp2fut = lead(Resp2, 1),
+    HR1change = HR1fut - HR1,
+    HR2change = HR2fut - HR2,
+    Resp1change = Resp1fut - Resp1,
+    Resp2change = Resp2fut - Resp2
+    )
 
 # Make the data long, so we can analyze both participants at the same time 
 ## N.B. This is a bit tricky and you might have to do it in several steps
 
-# Set the most interesting contrast e.g. by defining synchronous or conversation as the baseline
+#d_hr_change <- output %>% ungroup() %>% 
+#  gather(participant, changeHR_Self, HR1change, HR2change) %>% 
+#  select(timesincestart, changeHR_Self, participant, study, condition, trial, pairID) %>% 
+#  mutate(participant = parse_number(as.character(pairID)) * 10 + parse_number(participant))
 
+d_hr_change_self <- output %>% ungroup() %>% 
+  gather(participant, changeHR_self, HR1change, HR2change) %>% 
+  select(timesincestart, changeHR_self, participant, study, condition, trial, pairID) %>% 
+  mutate(participant = parse_number(as.character(pairID)) * 10 + parse_number(participant) + study)
+
+d_hr_change_other <- output %>% ungroup() %>% 
+  gather(participant, changeHR_other, HR2change, HR1change) %>% 
+  select(timesincestart, changeHR_other, participant, study, condition, trial, pairID) %>% 
+  mutate(participant = parse_number(as.character(pairID)) * 10 + ifelse(parse_number(participant) == 2, 1, 2)  + study)
+
+d_resp_change_self <- output %>% ungroup() %>% 
+  gather(participant, changeResp_self, Resp1change, Resp2change) %>% 
+  select(timesincestart, changeResp_self, participant, study, condition, trial, pairID) %>% 
+  mutate(participant = parse_number(as.character(pairID)) * 10 + parse_number(participant)  + study)
+
+d_resp_change_other <- output %>% ungroup() %>% 
+  gather(participant, changeResp_other, Resp2change, Resp1change) %>% 
+  select(timesincestart, changeResp_other, participant, study, condition, trial, pairID) %>% 
+  mutate(participant = parse_number(as.character(pairID)) * 10 + ifelse(parse_number(participant) == 2, 1, 2)  + study)
+
+d_hr_self <- output %>% ungroup() %>% 
+  gather(participant, HR_self, HR1, HR2) %>% 
+  select(timesincestart, HR_self, participant, study, condition, trial, pairID) %>% 
+  mutate(participant = parse_number(as.character(pairID)) * 10 + parse_number(participant)  + study)
+
+d_hr_other <- output %>% ungroup() %>% 
+  gather(participant, HR_other, HR2, HR1) %>% 
+  select(timesincestart, HR_other, participant, study, condition, trial, pairID) %>% 
+  mutate(participant = parse_number(as.character(pairID)) * 10 + ifelse(parse_number(participant) == 2, 1, 2)  + study)
+
+d_resp_self <- output %>% ungroup() %>% 
+  gather(participant, Resp_self, Resp1, Resp2) %>% 
+  select(timesincestart, Resp_self, participant, study, condition, trial, pairID) %>% 
+  mutate(participant = parse_number(as.character(pairID)) * 10 + parse_number(participant)  + study)
+
+d_resp_other <- output %>% ungroup() %>% 
+  gather(participant, Resp_other, Resp2, Resp1) %>% 
+  select(timesincestart, Resp_other, participant, study, group, condition, trial, pairID) %>% 
+  mutate(participant = parse_number(as.character(pairID)) * 10 + ifelse(parse_number(participant) == 2, 1, 2)  + study)
+
+dod <- merge(d_hr_change_self, d_hr_change_other) %>% 
+  merge(d_resp_change_self) %>% 
+  merge(d_resp_change_other) %>% 
+  merge(d_hr_self, all=T) %>% 
+  merge(d_hr_other, all=T) %>% 
+  merge(d_resp_self, all=T) %>% 
+  merge(d_resp_other, all=T)
+dod <- dd
+dod %>% arrange(timesincestart, pairID, trial)
+write_csv(dod,"merged_data.csv")
+################################################################
+##WHY DOES RICCARDO HAVE AN EXTRA LAG IN HIS CHANGE CONDITIONS##
+################################################################
+dod <- read_csv("merged_data.csv")
+p_load(lmerTest)
+
+dod %>% 
+  group_by(pairID, condition) %>% 
+  summarize(na = sum(is.na(HR_self)), bad = na == length(HR_self))
+
+s4 <- dod %>% filter(study == 4)
+# Set the most interesting contrast e.g. by defining synchronous or conversation as the baseline
+s4$condition <- relevel(as.factor(s4$condition), "Synchronous")
+unique(s4$condition)
+ls.str(s4)
+s4$condition <- as.character(s4$condition)
+dod %>% arrange(study, pairID, condition)
 # Model change as a function of own and other previous state 
 
+hrm1 <- lmer(changeHR_self ~ 
+             (HR_self + HR_other) * condition + 
+             (HR_self + HR_other) * condition + (1|participant) +
+             (HR_self + HR_other) * condition + (1|pairID), data=s4) 
 
+hrm1 <- lm(changeHR_self ~ 
+             0 + condition + (HR_self + HR_other):condition, data=s4)
+
+hrm2 <- lmer(changeHR_self ~ 
+             0 + condition + (HR_self + HR_other) : condition + 
+             0 + condition + (HR_self + HR_other) : condition + (1|participant) +
+             0 + condition + (HR_self + HR_other) : condition + (1|group), data=s4)
+summary(hrm2)
+
+respm1 <- lmer(changeResp_self ~ 
+             (Resp_self + Resp_other) * condition + 
+             (Resp_self + Resp_other) * condition + (1|participant) +
+             (Resp_self + Resp_other) * condition + (1|group), data=s4) 
+
+
+respm2 <- lmer(changeResp_self ~ 
+             0 +  oncig (Resp_self + Resp_other) : condition + 
+             0 + (Resp_self + Resp_other) : condition + (1|participant) +
+             0 + (Resp_self + Resp_other) : condition + (1|group), data=s4)
+summary(respm2)
 # Bonus points: Add to the previous model also change in the other to see whether my adaptation is influenced by the other's adaptation.
+p_load(beepr)
+beep(sound=4)
 
+ggplot(dod[which(dod$pairID==406 & dod$timesincestart > 1.314 & dod$timesincestart < 1.375),]) + 
+  geom_line(aes(timesincestart, HR_self))
+
+dod[which(dod$pairID==406 & dod$timesincestart > 1.314 & dod$timesincestart < 1.375 & dod$condition == "TurnTaking"),]
 ```
 
 
 ## Now we need to create control baselines.
 
 First shuffled controls, then surrogate pairs.
+```{r}
+HR_change ~ (HR1 + HR2) : Condition: Real/Ø-1
+```
 
 ### Creating controls: shuffled controls
 
