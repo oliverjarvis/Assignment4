@@ -625,8 +625,10 @@ write_csv(dod,"merged_data.csv")
 ################################################################
 ##WHY DOES RICCARDO HAVE AN EXTRA LAG IN HIS CHANGE CONDITIONS##
 ################################################################
+library(pacman)
+p_load(lmerTest, tidyverse, compare)
+
 dod <- read_csv("merged_data.csv")
-p_load(lmerTest)
 
 dod %>% 
   group_by(pairID, condition) %>% 
@@ -690,9 +692,48 @@ Shuffled controls break the temporal dependencies of time-series by shuffling th
 Tip: sample() is your friend, but make sure to shuffle things within participant/condition and not throughout the whole dataset
  
 ```{r}
-
+hrm2 <- lmer(changeHR_self ~ 
+             0 + condition + (HR_self + HR_other) : condition + 
+             0 + condition + (HR_self + HR_other) : condition + (1|participant) +
+             0 + condition + (HR_self + HR_other) : condition + (1|group), data=s4)
+summary(hrm2)
 # Create a shuffled dataset
 # Concatenate it to the original dataset (and remember to have a column telling you which is which)
+
+shuffled <- s4 %>%   group_by(participant, condition) %>% slice(sample(1:n()))
+
+shuffled <- shuffled %>% 
+  group_by(participant, condition) %>% 
+  mutate(
+    HR_self_fut = lead(HR_self, 1),
+    changeHR_self_shuf = HR_self_fut - HR_self,
+    )
+
+s4.2 <- s4
+
+s4.2$HR_self_shuff <- shuffled$HR_self
+s4.2$HR_other_shuff <- shuffled$HR_other
+s4.2$changeHR_self_shuff <- shuffled$changeHR_self_shuf
+s4.2$condition <- relevel(as.factor(s4.2$condition), "Synchronous")
+
+d1 <-  s4.2 %>%  
+  gather("type", "changeHR_self", changeHR_self, changeHR_self_shuff) %>% 
+  mutate(type = ifelse(str_detect(type, "shuff"), "shuffled", "real")) %>% 
+  arrange(participant, condition)
+
+d2 <-  s4.2 %>%  
+  gather("type", "HR_self", HR_self, HR_self_shuff) %>% 
+  mutate(type = ifelse(str_detect(type, "shuff"), "shuffled", "real"))  %>% 
+  arrange(participant, condition)
+
+d3 <-  s4.2 %>%  
+  gather("type", "HR_other", HR_other, HR_other_shuff) %>% 
+  mutate(type = ifelse(str_detect(type, "shuff"), "shuffled", "real")) %>% 
+  arrange(participant, condition)
+
+merge(d1[30000:50000,],d2[40000:50000,]) %>% 
+  merge(d3[40000:50000,], all=T)
+shufs4 <- merge(d1, d2)
 
 # Create the same models as in the previous chunk, but adding an interaction by shuffled vs. real
 
